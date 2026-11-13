@@ -1,3 +1,77 @@
+# ArtCraft untuk Xiaomi Pad 6
+
+Fork pribadi dari [MostafaXS1/artcraft-android](https://github.com/MostafaXS1/artcraft-android) yang
+difokuskan untuk satu perangkat, **Xiaomi Pad 6**, dan satu kebutuhan: mengolah dokumen,
+spreadsheet, dan presentasi di tablet.
+
+Fork ini tidak berafiliasi dengan tim ArtCraft, pembuat port aslinya, maupun Xiaomi.
+
+## Apa yang dibangun di sini
+
+Hanya tiga aplikasi, bukan seluruh suite:
+
+| Aplikasi | Jenis | Format utama |
+| --- | --- | --- |
+| WordCraft | Pengolah kata | `.docx`, `.odt`, `.rtf`, `.md`; membuka `.doc` lama |
+| GridCraft | Spreadsheet | `.xlsx`, `.csv`, `.tsv`; `.xls`, `.xlsb`, `.ods` hanya sebagian |
+| DeckCraft | Presentasi | `.pptx`, `.ppsx`, `.potx` |
+
+Dukungan format di atas mengikuti klaim proyek upstream. Aplikasinya masih sangat muda, jadi
+selalu kerjakan salinan file dan periksa hasil simpanannya sebelum mengandalkannya.
+
+## Bedanya dengan repo asli
+
+- **Hanya tiga aplikasi.** Matriks build dipangkas menjadi WordCraft, GridCraft, dan DeckCraft.
+- **Kunci tanda tangan tetap.** Repo asli membuat kunci baru di setiap build, sehingga versi baru
+  tidak bisa menimpa versi lama. Di sini semua APK ditandatangani dengan satu kunci yang disimpan
+  sebagai repository secret, jadi pembaruan terpasang di atas versi lama tanpa uninstall.
+- **Cek pembaruan mengarah ke fork ini.** Aplikasi tidak lagi menawarkan rilis repo asli, yang
+  ditandatangani dengan kunci berbeda dan tidak bisa dipasang di atas build dari fork ini.
+
+Belum ada perubahan kode yang khusus untuk Xiaomi Pad 6. "Difokuskan" di sini berarti build
+dipilih, dipasang, dan diuji untuk perangkat itu; penyesuaian khusus akan dicatat di sini kalau
+sudah ada.
+
+## Kecocokan dengan Xiaomi Pad 6
+
+- APK dibangun untuk **ARM64** dan butuh **Android 9 ke atas**; Xiaomi Pad 6 memenuhi keduanya.
+- Antarmukanya adalah ribbon versi desktop, bukan antarmuka sentuh. Paling nyaman dipakai dengan
+  keyboard dan mouse atau touchpad.
+- Setiap kali dibuka, aplikasi meminta izin **akses semua file** sampai izin itu diberikan. Izin
+  itu dipakai untuk membuka dan menyimpan file di luar pemilih dokumen sistem serta untuk membaca
+  font tambahan di folder `Fonts` pada penyimpanan internal.
+
+Hasil uji di perangkat belum dicatat. Bagian ini akan diperbarui setelah APK dicoba di tablet.
+
+## Cara mengunduh dan memasang
+
+1. Buka tab [Actions](../../actions) dan pilih run **Build APKs** terbaru yang berhasil.
+2. Unduh artifact `artcraft-all-apks` di bagian bawah halaman run (perlu login GitHub), lalu
+   ekstrak file zip-nya.
+3. Salin APK ke tablet dan pasang. Android akan meminta izin memasang dari sumber tidak dikenal.
+
+Kalau di tablet sudah terpasang versi dari repo asli, uninstall dulu. Tanda tangannya berbeda,
+jadi Android menolak menimpanya. Setelah itu, build berikutnya dari fork ini bisa langsung
+dipasang di atas yang lama.
+
+## Kalau Anda mem-fork repo ini
+
+Build akan gagal sampai dua repository secret diisi di
+**Settings → Secrets and variables → Actions**:
+
+| Secret | Isi |
+| --- | --- |
+| `ARTCRAFT_KEYSTORE_B64` | Keystore PKCS12 dengan alias `artcraftbuilder`, dalam base64 satu baris |
+| `ARTCRAFT_KEYSTORE_PASSWORD` | Kata sandi keystore tersebut |
+
+Buat keystore Anda sendiri dan simpan cadangannya. Kalau kuncinya hilang, build berikutnya tidak
+bisa menimpa aplikasi yang sudah terpasang.
+
+---
+
+Di bawah ini README asli dari repo upstream, dibiarkan apa adanya. Tautan unduhan di dalamnya
+mengarah ke rilis repo asli, bukan ke build fork ini.
+
 # ArtCraft Android
 
 **The full ArtCraft PC experience, now on Android.**
