@@ -45,24 +45,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # This fork builds only the office apps. Add an upstream app name here to build it too.
         app:
-          - photocraft
-          - vectorcraft
-          - filmcraft
-          - lightcraft
-          - pdfcraft
-          - effectcraft
-          - designcraft
-          - figcraft
           - wordcraft
-          - soundcraft
-          - deckcraft
-          - cadcraft
           - gridcraft
-          - subcraft
-          - solidcraft
-          - materialcraft
-          - texturecraft
+          - deckcraft
 
     steps:
       - name: Checkout repository
@@ -155,6 +142,31 @@ jobs:
           fi
           echo "ARTCRAFT_BUILD_TOOLS_VERSION=35.0.0" >> $GITHUB_ENV
 
+      # Every APK is signed with the same key, kept in the repository secrets, so a newer
+      # build installs over an older one. Without this step the builder would generate a
+      # throwaway key per job and Android would refuse the update.
+      - name: Restore persistent signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ARTCRAFT_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ARTCRAFT_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::Repository secrets ARTCRAFT_KEYSTORE_B64 and ARTCRAFT_KEYSTORE_PASSWORD are required (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          # A pasted secret can carry a stray newline or space; neither is part of the value.
+          KEYSTORE_PASSWORD="$(printf '%s' "$KEYSTORE_PASSWORD" | tr -d '\r\n\t ')"
+          mkdir -p keys
+          chmod 700 keys
+          printf '%s' "$KEYSTORE_B64" | tr -d '\r\n\t ' | base64 -d > keys/artcraft-builder.jks
+          printf '%s\n' "$KEYSTORE_PASSWORD" > keys/.keystore-password
+          chmod 600 keys/artcraft-builder.jks keys/.keystore-password
+          if ! keytool -list -keystore keys/artcraft-builder.jks -storepass "$KEYSTORE_PASSWORD" -alias artcraftbuilder >/dev/null 2>&1; then
+            echo "::error::The signing key in the secrets could not be opened (wrong password, or no 'artcraftbuilder' alias)."
+            exit 1
+          fi
+          echo "Signing key restored."
+
       - name: Build ${{ matrix.app }} APK
         timeout-minutes: 35
         env:
@@ -192,6 +204,11 @@ jobs:
               exit 1
             fi
             echo "Verified valid APK: $apk ($(( size / 1048576 )) MB)"
+            # The certificate fingerprint is public; it must be identical for every app and run.
+            apksigner="$ANDROID_HOME/build-tools/${ARTCRAFT_BUILD_TOOLS_VERSION:-35.0.0}/apksigner"
+            if [ -x "$apksigner" ]; then
+              "$apksigner" verify --print-certs "$apk" | grep -i 'certificate SHA-256' || true
+            fi
           done
           if [ "$count" -eq 0 ]; then
             echo "::error::No APK found in output/" | tee -a "logs/${{ matrix.app }}-build.log" >&2
