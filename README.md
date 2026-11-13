@@ -4,7 +4,9 @@ Fork pribadi dari [MostafaXS1/artcraft-android](https://github.com/MostafaXS1/ar
 difokuskan untuk satu perangkat, **Xiaomi Pad 6**, dan satu kebutuhan: mengolah dokumen,
 spreadsheet, dan presentasi di tablet.
 
-Fork ini tidak berafiliasi dengan tim ArtCraft, pembuat port aslinya, maupun Xiaomi.
+Fork ini tidak berafiliasi dengan, tidak didukung oleh, dan tidak mewakili tim ArtCraft, pembuat
+port aslinya, maupun Xiaomi. Nama produk dan merek yang disebut di sini adalah milik pemiliknya
+masing-masing dan dipakai hanya untuk menjelaskan perangkat dan format file yang didukung.
 
 ## Apa yang dibangun di sini
 
