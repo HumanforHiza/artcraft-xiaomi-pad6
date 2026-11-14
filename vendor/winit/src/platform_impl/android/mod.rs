@@ -1279,11 +1279,20 @@ impl<T: 'static> EventLoop<T> {
                             _ => event::ElementState::Released,
                         };
 
-                        let key_char = keycodes::character_map_and_combine_key(
-                            android_app,
-                            key,
-                            &mut self.combining_accent,
-                        );
+                        // Compact keyboards (Xiaomi Pad's among them) put "`" on the Esc key, and
+                        // their KeyCharacterMap reports that character for a plain Esc press — so
+                        // Escape typed "`" into documents instead of closing a menu or dialog.
+                        // A plain Esc is Escape; with Shift held the layout's character stays
+                        // available.
+                        let key_char = if keycode == Keycode::Escape && !key.meta_state().shift_on() {
+                            None
+                        } else {
+                            keycodes::character_map_and_combine_key(
+                                android_app,
+                                key,
+                                &mut self.combining_accent,
+                            )
+                        };
 
                         let logical_key = keycodes::to_logical(key_char, keycode);
                         let text = if state == event::ElementState::Pressed {

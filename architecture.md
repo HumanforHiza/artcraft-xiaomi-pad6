@@ -394,6 +394,7 @@ For apps with `recent_paths`/`open_paths` in recipes:
 - Rust calls `bridge.print_document(title, pdf_bytes)`
 - Java creates temp PDF, uses `PrintManager.print()` with `PdfPrintAdapter` 
 - Returns "OK" or error string
+- DeckCraft's Print page opens its PDF as a `file://` URL; `egui-winit`'s Android `open_url` routes a local `.pdf` to `printPdfFile(path)`, which feeds the same `printDocument` flow
 
 ---
 
@@ -442,8 +443,9 @@ For apps with `recent_paths`/`open_paths` in recipes:
 
 - winit consumes back key, reports as `Key::BrowserBack`
 - Shell maps `BrowserBack` to `Key::Escape` (consumed if app handles it)
-- If not consumed and app has close guard, shows app's quit prompt; otherwise finishes activity
+- If not consumed and app has close guard, shows app's quit prompt
 - Apps with `close_requested()`/`quit_requested` get same behavior as desktop window close
+- Apps without `close_requested()` get the desktop's window close itself: the next frame carries a root `ViewportEvent::Close`; an app that answers `ViewportCommand::CancelClose` (GridCraft, DeckCraft: "save changes?") stays, any other close finishes the activity (`settle_viewport_close`). eframe is always told to cancel; the activity ends via `finish_activity`
 
 ---
 

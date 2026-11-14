@@ -733,7 +733,7 @@ marker = android_dir / ".artcraft-android-builder-generated"
 # Bump this whenever the generated launcher template changes so stale wrappers (which live in the
 # source checkout and would otherwise be preserved forever) are regenerated automatically instead
 # of failing against a newer app API.
-GENERATOR_VERSION = "71"
+GENERATOR_VERSION = "72"
 
 # A complete adapter supplied by the user wins over auto-detection. This folder is maintained
 # inside the builder, while its contents are copied into this source checkout.
@@ -1299,7 +1299,16 @@ fn saf_write_and_commit(bridge: &saf::Bridge, path: &str, bytes: &[u8]) -> Resul
 fn saf_pick_open(bridge: &saf::Bridge, state: &SafState) -> Option<String> {
     let id = saf_next_id(state);
     match bridge.pick_blocking(id, None, saf::PICK_TIMEOUT) {
-        Ok(saf::PickAnswer::Paths(paths)) => paths.into_iter().next(),
+        Ok(saf::PickAnswer::Paths(paths)) => {
+            let path = paths.into_iter().next();
+            // The app saves an opened document to this staged copy (its file API is path-based);
+            // watch it so Save writes back to the document the user picked, as WordCraft does —
+            // not only to the private copy.
+            if let Some(path) = &path {
+                state.mirror.track(id, path);
+            }
+            path
+        }
         Ok(saf::PickAnswer::Cancelled) => None,
         Err(error) => {
             log::error!("Android open picker: {error}");
@@ -1497,7 +1506,16 @@ fn saf_write_and_commit(bridge: &saf::Bridge, path: &str, bytes: &[u8]) -> Resul
 fn saf_pick_open(bridge: &saf::Bridge, state: &SafState) -> Option<String> {
     let id = saf_next_id(state);
     match bridge.pick_blocking(id, None, saf::PICK_TIMEOUT) {
-        Ok(saf::PickAnswer::Paths(paths)) => paths.into_iter().next(),
+        Ok(saf::PickAnswer::Paths(paths)) => {
+            let path = paths.into_iter().next();
+            // The app saves an opened document to this staged copy (its file API is path-based);
+            // watch it so Save writes back to the document the user picked, as WordCraft does —
+            // not only to the private copy.
+            if let Some(path) = &path {
+                state.mirror.track(id, path);
+            }
+            path
+        }
         Ok(saf::PickAnswer::Cancelled) => None,
         Err(error) => {
             log::error!("Android open picker: {error}");
@@ -1529,17 +1547,14 @@ fn saf_pick_save(bridge: &saf::Bridge, state: &SafState, name: &str) -> Option<S
 ''',
         "services": '''
 fn saf_services(bridge: saf::Bridge, state: Arc<SafState>, inbox: SafInbox) -> Services {
-    let open_bridge = bridge.clone_ref();
     let picture_bridge = bridge.clone_ref();
     let save_bridge = bridge.clone_ref();
     let pick_open_bridge = bridge.clone_ref();
     let pick_save_bridge = bridge.clone_ref();
-    let open_state = Arc::clone(&state);
     let picture_state = Arc::clone(&state);
     let save_state = Arc::clone(&state);
     let pick_open_state = Arc::clone(&state);
     let pick_save_state = Arc::clone(&state);
-    let open_inbox = inbox.clone();
     let print_bridge = bridge.clone_ref();
     Services {
         // Android does not let an app enumerate printers: printer choice, paper, duplex, colour and
@@ -1577,14 +1592,10 @@ fn saf_services(bridge: saf::Bridge, state: Arc<SafState>, inbox: SafInbox) -> S
         // bridge makes safe (`NonblockingCallbacks`), exactly as EffectCraft does.
         pick_open: Some(Box::new(move || saf_pick_open(&pick_open_bridge, &pick_open_state))),
         pick_save: Some(Box::new(move |name: &str| saf_pick_save(&pick_save_bridge, &pick_save_state, name))),
-        open_async: Some(Box::new(move || {
-            let id = saf_next_id(&open_state);
-            open_state.opens.lock().unwrap_or_else(|error| error.into_inner()).insert(id, open_inbox.clone());
-            if let Err(error) = open_bridge.request_open(id, false) {
-                log::error!("Could not start the Android open picker: {error}");
-                open_state.opens.lock().unwrap_or_else(|error| error.into_inner()).remove(&id);
-            }
-        })),
+        // No `open_async`: it hands GridCraft only the file's bytes, so an opened workbook had no
+        // location (Save became Save As, Recent stayed empty). `pick_open` gives the staged path,
+        // which Save writes back to the picked document.
+        open_async: None,
         pick_picture_async: Some(Box::new(move |target: SafInbox| {
             let id = saf_next_id(&picture_state);
             picture_state.opens.lock().unwrap_or_else(|error| error.into_inner()).insert(id, target);
@@ -2366,6 +2377,11 @@ PERSIST_RECIPES = {
         if let Some(ui) = @UI@::UiState::from_json(&bytes) {
             inner.apply_prefs(ui);
         }
+    }
+    // Local recovery, as the desktop host enables it: unsaved work survives a killed app and
+    // File > Recover lists it. The worker's answers are picked up on the next frame.
+    if let Err(error) = inner.session.enable_recovery(dir.join("recovery"), std::sync::Arc::new(|| {})) {
+        log::warn!("local recovery unavailable: {error}");
     }''',
         "save": '''match serde_json::to_vec_pretty(&inner.prefs()) {
         Ok(bytes) => persist_write(dir, "ui.json", &bytes),
@@ -2445,8 +2461,15 @@ PERSIST_RECIPES = {
     }
     if let Some(prefs) = prefs {
         inner.session.prefs = prefs;
+    }
+    // AutoRecover, as the desktop host enables it: reopen what a killed run left unsaved, then
+    // keep it current (DeckCraft saves the copies on its own timer once the folder is set).
+    inner.session.recovery_dir = Some(dir.join("Recovery"));
+    let _ = inner.session.execute("file.recovery.open", &serde_json::json!({}));''',
+        "save": '''@UI@::settings::save(dir, &inner.ui, &inner.session.prefs);
+    if inner.session.recovery_dir.is_some() && inner.session.documents().iter().any(|d| d.is_dirty()) {
+        let _ = inner.session.execute("file.recovery.save", &serde_json::json!({}));
     }''',
-        "save": '''@UI@::settings::save(dir, &inner.ui, &inner.session.prefs);''',
     },
     "soundcraft": {
         "load": '''if let Some(bytes) = persist_read(dir, "ui.json") {
@@ -3222,7 +3245,21 @@ icon = "@mipmap/ic_launcher"
             "        }\n"
         )
     else:
-        close_guard_code = ""
+        # No `close_requested` method: many apps (GridCraft, DeckCraft, …) guard their unsaved work
+        # the way eframe expects on the desktop instead — they watch
+        # `ctx.input(|i| i.viewport().close_requested())`, answer with
+        # `ViewportCommand::CancelClose`, and open their own "save changes?" prompt. Give them that
+        # very close request: the next frame carries a root `ViewportEvent::Close`, and
+        # [`AndroidShell::settle_viewport_close`] finishes the app only if the app let it go.
+        # Before this, such apps vanished on back and their unsaved work was lost.
+        close_guard_code = (
+            "        // The app guards its work through egui's close request; ask it that way on the next\n"
+            "        // frame. `settle_viewport_close` ends the app once the app lets the close through.\n"
+            "        self.close_via_viewport = true;\n"
+            "        if self.close_via_viewport {\n"
+            "            return;\n"
+            "        }\n"
+        )
     if has_quit_flag:
         quit_check = (
             "        if !self.closing && self.inner.quit_requested {\n"
@@ -3777,12 +3814,15 @@ struct AndroidShell {{
     bars_theme: Option<bool>,
     back_pending: bool,
     closing: bool,
-    close_asked: bool,{saf_fields}{intent_field}{persist_fields}{staged_fields}
+    close_asked: bool,
+    /// A back press asked to leave an app that guards its work through egui's close request:
+    /// the next frame's input carries a root `ViewportEvent::Close`.
+    close_via_viewport: bool,{saf_fields}{intent_field}{persist_fields}{staged_fields}
 }}
 
 impl AndroidShell {{
     fn new(mut inner: {app_type}, app: AndroidApp{saf_new_params}) -> Self {{
-        {persist_new_body}Self {{ inner, app, modifiers: egui::Modifiers::default(), fullscreen_applied: false, probe: InputProbe::default(), bars_theme: None, back_pending: false, closing: false, close_asked: false{saf_new_init}{intent_init}{persist_new_init}{staged_new_init} }}
+        {persist_new_body}Self {{ inner, app, modifiers: egui::Modifiers::default(), fullscreen_applied: false, probe: InputProbe::default(), bars_theme: None, back_pending: false, closing: false, close_asked: false, close_via_viewport: false{saf_new_init}{intent_init}{persist_new_init}{staged_new_init} }}
     }}
 {saf_poll_method}{intent_method}{persist_methods}{staged_methods}
     /// Keep the system-bar icon contrast on the app's active theme: egui's light/dark choice is
@@ -3851,6 +3891,37 @@ impl AndroidShell {{
         finish_activity(&self.app);
     }}
 
+    /// Deliver a pending back-press close as the desktop's own window close: a root
+    /// `ViewportEvent::Close` in this frame's input, which the app sees through
+    /// `ctx.input(|i| i.viewport().close_requested())`.
+    fn inject_viewport_close(&mut self, raw: &mut egui::RawInput) {{
+        if !self.close_via_viewport {{
+            return;
+        }}
+        self.close_via_viewport = false;
+        raw.viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+        log::info!("Android: back press delivered to the app as a window close request");
+    }}
+
+    /// Settle a window close request (the back press above, or the app's own
+    /// `ViewportCommand::Close` once its "save changes?" prompt was answered) as eframe does on
+    /// the desktop: an app that answered `CancelClose` stays — it is asking the user first —
+    /// and any other close ends the Activity. eframe itself is always told to cancel, because
+    /// tearing its event loop down is not how an Android app ends; the Activity finishes instead.
+    fn settle_viewport_close(&mut self, ctx: &egui::Context) {{
+        if self.closing || !ctx.input(|i| i.viewport().close_requested()) {{
+            return;
+        }}
+        let cancelled = ctx.viewport(|v| v.commands.contains(&egui::ViewportCommand::CancelClose));
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if cancelled {{
+            log::info!("Android: the app kept the window open to ask about unsaved work");
+        }} else {{
+            self.closing = true;
+            finish_activity(&self.app);
+        }}
+    }}
+
     /// Emit egui `Copy`/`Cut`/`Paste` events for Ctrl/Cmd+C/X/V key presses.
     ///
     /// winit's Android backend never emits `ModifiersChanged`, so egui-winit's own
@@ -3896,6 +3967,8 @@ impl eframe::App for AndroidShell {{
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {{
         system_fonts::install_system_fonts(ui.ctx());
         {inner_ui}
+        // The app has had its say on any close request in this frame's input.
+        self.settle_viewport_close(ui.ctx());
         if self.back_pending {{
             self.back_pending = false;
             // A back press was mapped onto Escape. If the app consumed that Escape (a dialog
@@ -3911,6 +3984,10 @@ impl eframe::App for AndroidShell {{
                 }}
             }}
         }}
+        if self.close_via_viewport {{
+            // The close request goes into the next frame's input; make sure that frame comes.
+            ui.ctx().request_repaint();
+        }}
     }}
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {{
@@ -3918,6 +3995,7 @@ impl eframe::App for AndroidShell {{
         self.refresh_fullscreen(raw);
         apply_android_modifiers(&mut self.modifiers, raw);
         self.map_android_back(raw);
+        self.inject_viewport_close(raw);
         self.handle_clipboard_shortcuts(raw);
 {persist_hook}        {inner_hook}
     }}

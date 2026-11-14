@@ -45,6 +45,32 @@ pub fn open_url(url: &str) -> bool {
         let activity_raw = activity_ptr;
         let activity = unsafe { env.as_cast_raw::<JObject<'_>>(&activity_raw)? };
 
+        // A PDF the app wrote to its own storage ("print: open the PDF in your viewer"). Android
+        // refuses `file://` intents (FileUriExposedException), so hand it to the Activity's print
+        // bridge — the system print dialog — when the Activity has one. Activities without
+        // `printPdfFile` fall through to the plain intent below.
+        if let Some(path) = normalized_url.strip_prefix("file://")
+            && path.to_ascii_lowercase().ends_with(".pdf")
+        {
+            let path_obj = env.new_string(path)?;
+            let path_ref: &JObject<'_> = path_obj.as_ref();
+            match env.call_method(
+                &*activity,
+                jni_str!("printPdfFile"),
+                jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                &[JValue::Object(path_ref)],
+            ) {
+                Ok(_) => {
+                    log::info!("egui-winit open_url: sent {path} to the Android print dialog");
+                    return Ok(true);
+                }
+                Err(err) => {
+                    let _ = env.exception_clear();
+                    log::warn!("egui-winit open_url: no print bridge for {path} ({err}); trying a view intent");
+                }
+            }
+        }
+
         // `Uri.parse(url)`
         let uri_class = env.find_class(jni_str!("android/net/Uri"))?;
         let url_obj = env.new_string(&normalized_url)?;

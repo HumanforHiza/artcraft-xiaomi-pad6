@@ -1432,6 +1432,35 @@ public final class __CLASS__ extends NativeActivity {
         return "OK";
     }
 
+    /**
+     * Print a PDF the app already wrote to its private storage. Apps whose Print page "opens the
+     * PDF in your viewer, where you choose the printer" (DeckCraft) hand egui-winit a
+     * {@code file://} URL; Android refuses to start an activity with one (FileUriExposed), so
+     * Print silently did nothing. egui-winit routes such a PDF here instead, and it goes to the
+     * same system print dialog WordCraft and GridCraft use.
+     */
+    public String printPdfFile(String path) {
+        try {
+            File file = new File(path);
+            if (!file.isFile()) return "ERROR: there is no PDF at " + path;
+            byte[] bytes = new byte[(int) file.length()];
+            try (FileInputStream in = new FileInputStream(file)) {
+                int read = 0;
+                while (read < bytes.length) {
+                    int n = in.read(bytes, read, bytes.length - read);
+                    if (n < 0) break;
+                    read += n;
+                }
+            }
+            String name = file.getName();
+            if (name.toLowerCase(java.util.Locale.ROOT).endsWith(".pdf")) name = name.substring(0, name.length() - 4);
+            return printDocument(name, bytes);
+        } catch (Throwable error) {
+            Log.e(TAG, "Could not print " + path, error);
+            return "ERROR: " + error;
+        }
+    }
+
     /** Page count from the system's own PDF parser; feeds PrintDocumentInfo below. */
     private static int countPdfPages(File file) throws Exception {
         try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) {
