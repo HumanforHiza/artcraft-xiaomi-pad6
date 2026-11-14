@@ -348,9 +348,11 @@ impl State {
         #[cfg(target_os = "android")]
         {
             self.egui_input.system_theme = crate::system_theme::system_theme();
-            if self.allow_ime {
-                self.egui_ctx.request_repaint_after(std::time::Duration::from_millis(16));
-            }
+            // No repaint timer while the IME is allowed: text the Activity queues calls
+            // `ArtCraftIme.wake()`, which wakes the looper, and winit turns that wake into a
+            // redraw, so the queue below is drained on the frame the text arrives. A 16 ms
+            // timer here kept every app rendering ~60 frames a second for as long as a text
+            // field or the document caret had focus (about 75-80% of a core on a Pad 6).
             for ev in crate::ime::android::poll_all_ime_events() {
                 if ev == "\x08" {
                     self.egui_input.events.push(egui::Event::Key {

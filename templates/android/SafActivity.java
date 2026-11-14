@@ -240,18 +240,25 @@ public final class __CLASS__ extends NativeActivity {
         @Override
         public SpannableStringBuilder replace(int start, int end, CharSequence tb, int tbstart, int tbend) {
             if (inputView != null && !inputView.suppressingWatcher) {
-                int deleteCount = end - start;
-                if (deleteCount > 0) {
-                    for (int i = 0; i < deleteCount; i++) {
-                        onImeDelete();
-                    }
+                String removed = subSequence(start, end).toString();
+                String inserted = tb == null ? "" : tb.subSequence(tbstart, tbend).toString();
+                // Keyboards such as Gboard rewrite the word they are composing on every key
+                // (setComposingText replaces the whole composing span). Send the app only what
+                // changed: the start both texts share stays where it is, so typing "r" after
+                // "Pa" reaches the app as "r", not as "delete Pa, type Par". That delete-and-
+                // retype churn on every key broke the app's undo (Undo also took out the word
+                // being typed). Deletes are counted in code points: the app's Backspace removes
+                // one character, and an emoji is two UTF-16 units.
+                int keep = 0;
+                int limit = Math.min(removed.length(), inserted.length());
+                while (keep < limit && removed.charAt(keep) == inserted.charAt(keep)) keep++;
+                if (keep > 0 && Character.isHighSurrogate(removed.charAt(keep - 1))) keep--;
+                int deletes = removed.codePointCount(keep, removed.length());
+                for (int i = 0; i < deletes; i++) {
+                    onImeDelete();
                 }
-                int insertCount = tbend - tbstart;
-                if (insertCount > 0 && tb != null) {
-                    String inserted = tb.subSequence(tbstart, tbend).toString();
-                    if (!inserted.isEmpty()) {
-                        onImeCommit(inserted);
-                    }
+                if (keep < inserted.length()) {
+                    onImeCommit(inserted.substring(keep));
                 }
             }
             SpannableStringBuilder result = super.replace(start, end, tb, tbstart, tbend);
@@ -948,6 +955,17 @@ public final class __CLASS__ extends NativeActivity {
      */
     public String intentPoll() {
         return intentPaths.poll();
+    }
+
+    /**
+     * How many files the system (or another app's drop) handed us that the shell has not opened
+     * yet. Asked without taking anything off the queue, so the frame that opens the file still
+     * finds it there. The shell's watcher thread uses it to wake an idle app: egui runs a frame
+     * only when something asks it to, so a file that arrives while the app sits untouched would
+     * otherwise wait for the next touch.
+     */
+    public int intentPending() {
+        return intentPaths.size();
     }
 
     public String safPoll() { return results.poll(); }
