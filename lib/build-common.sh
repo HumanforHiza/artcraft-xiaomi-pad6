@@ -733,7 +733,7 @@ marker = android_dir / ".artcraft-android-builder-generated"
 # Bump this whenever the generated launcher template changes so stale wrappers (which live in the
 # source checkout and would otherwise be preserved forever) are regenerated automatically instead
 # of failing against a newer app API.
-GENERATOR_VERSION = "74"
+GENERATOR_VERSION = "75"
 
 # A complete adapter supplied by the user wins over auto-detection. This folder is maintained
 # inside the builder, while its contents are copied into this source checkout.
@@ -2380,7 +2380,7 @@ PERSIST_RECIPES = {
     }
     // Local recovery, as the desktop host enables it: unsaved work survives a killed app and
     // File > Recover lists it. The worker's answers are picked up on the next frame.
-    if let Err(error) = inner.session.enable_recovery(dir.join("recovery"), std::sync::Arc::new(|| {})) {
+    if let Err(error) = inner.session.enable_recovery(dir.join("recovery"), persist_wake()) {
         log::warn!("local recovery unavailable: {error}");
     }''',
         # Settings only. The document is not saved here: this runs every couple of seconds, and a
@@ -2710,6 +2710,23 @@ fn install_persist_env(app: &AndroidApp) {
     log::info!("settings directory: {}", config.display());
 }
 
+/// The app's egui context, stored on every frame. `persist_load` runs before the first frame,
+/// so background work it starts (local recovery) has no context to wake yet; `persist_wake`
+/// looks it up when the work finishes.
+#[allow(dead_code)]
+static PERSIST_CTX: std::sync::OnceLock<egui::Context> = std::sync::OnceLock::new();
+
+/// A wake-up for background work started from `persist_load`: asks for a repaint once the UI
+/// exists, so an answer (a recovery scan, a restored document) shows without waiting for input.
+#[allow(dead_code)]
+fn persist_wake() -> std::sync::Arc<dyn Fn() + Send + Sync> {
+    std::sync::Arc::new(|| {
+        if let Some(ctx) = PERSIST_CTX.get() {
+            ctx.request_repaint();
+        }
+    })
+}
+
 #[allow(dead_code)]
 fn persist_read(dir: &std::path::Path, name: &str) -> Option<Vec<u8>> {
     std::fs::read(dir.join(name)).ok()
@@ -2917,7 +2934,7 @@ fn persist_save(inner: &mut {app_type}, dir: &std::path::Path) {{
     persist_new_body = _bootstrap_body
     persist_new_init = ", persist, persist_last: None"
     persist_methods = PERSIST_METHODS
-    persist_logic = "        self.persist_tick();\n"
+    persist_logic = "        let _ = PERSIST_CTX.set(ctx.clone());\n        self.persist_tick();\n"
     persist_hook = PERSIST_HOOK
     persist_on_exit = PERSIST_ON_EXIT
     persist_env_call = "    install_persist_env(&android_app);\n"
