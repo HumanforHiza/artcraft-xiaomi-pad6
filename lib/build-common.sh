@@ -733,7 +733,7 @@ marker = android_dir / ".artcraft-android-builder-generated"
 # Bump this whenever the generated launcher template changes so stale wrappers (which live in the
 # source checkout and would otherwise be preserved forever) are regenerated automatically instead
 # of failing against a newer app API.
-GENERATOR_VERSION = "76"
+GENERATOR_VERSION = "77"
 
 # A complete adapter supplied by the user wins over auto-detection. This folder is maintained
 # inside the builder, while its contents are copied into this source checkout.
@@ -3778,6 +3778,27 @@ fn install_cadcraft_io() {
 /// same mouse activity grows `pointer`/`buttons`/`wheel` and leaves `touch` at zero
 /// (only real fingers grow it). Reports at most once per second, and only when a counter
 /// actually changed.
+/// What keeps the app drawing. An idle app draws nothing; one that keeps rendering over 20 frames
+/// a second drains the battery. Every 5 seconds of such drawing (at most 30 times a run) this logs
+/// egui's repaint causes, the code that asked for the frame, as `render-probe:` lines.
+fn render_probe(ctx: &egui::Context) {{
+    static STATE: std::sync::Mutex<(u32, Option<std::time::Instant>, u32)> = std::sync::Mutex::new((0, None, 0));
+    let Ok(mut state) = STATE.lock() else {{ return }};
+    let now = std::time::Instant::now();
+    let since = *state.1.get_or_insert(now);
+    state.0 += 1;
+    let secs = now.duration_since(since).as_secs_f32();
+    if secs < 5.0 {{
+        return;
+    }}
+    if state.0 as f32 / secs > 20.0 && state.2 < 30 {{
+        state.2 += 1;
+        log::info!("render-probe: {{}} frames in {{:.1}} s; repaint causes: {{:?}}", state.0, secs, ctx.repaint_causes());
+    }}
+    state.0 = 0;
+    state.1 = Some(now);
+}}
+
 #[derive(Default)]
 struct InputProbe {{
     pointer_moved: u64,
@@ -3982,6 +4003,7 @@ impl Drop for AndroidShell {{
 
 impl eframe::App for AndroidShell {{
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {{
+        render_probe(ctx);
 {intent_logic}{saf_logic_poll}{persist_logic}{staged_logic}        {inner_logic}
 {ime_hide_logic}        self.sync_bar_appearance(ctx);
 {quit_check}    }}

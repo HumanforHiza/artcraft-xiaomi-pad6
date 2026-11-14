@@ -239,37 +239,12 @@ public final class __CLASS__ extends NativeActivity {
     private final class ObservableEditable extends SpannableStringBuilder {
         @Override
         public SpannableStringBuilder replace(int start, int end, CharSequence tb, int tbstart, int tbend) {
-            if (inputView != null && !inputView.suppressingWatcher) {
-                String removed = subSequence(start, end).toString();
-                String inserted = tb == null ? "" : tb.subSequence(tbstart, tbend).toString();
-                // Keyboards such as Gboard rewrite the word they are composing on every key
-                // (setComposingText replaces the whole composing span). Send the app only what
-                // changed: the start both texts share stays where it is, so typing "r" after
-                // "Pa" reaches the app as "r", not as "delete Pa, type Par". That delete-and-
-                // retype churn on every key broke the app's undo (Undo also took out the word
-                // being typed). Deletes are counted in code points: the app's Backspace removes
-                // one character, and an emoji is two UTF-16 units.
-                int keep = 0;
-                int limit = Math.min(removed.length(), inserted.length());
-                while (keep < limit && removed.charAt(keep) == inserted.charAt(keep)) keep++;
-                if (keep > 0 && Character.isHighSurrogate(removed.charAt(keep - 1))) keep--;
-                int deletes = removed.codePointCount(keep, removed.length());
-                for (int i = 0; i < deletes; i++) {
-                    onImeDelete();
-                }
-                if (keep < inserted.length()) {
-                    onImeCommit(inserted.substring(keep));
-                }
-            }
             SpannableStringBuilder result = super.replace(start, end, tb, tbstart, tbend);
-            if (inputView != null && !inputView.suppressingWatcher && length() > 2000) {
-                inputView.suppressingWatcher = true;
-                try {
-                    super.delete(0, length() - 500);
-                    Selection.setSelection(this, length());
-                } finally {
-                    inputView.suppressingWatcher = false;
-                }
+            // Outside a batch edit every change reaches the app at once; inside one, endBatchEdit
+            // sends the batch's net change (see ArtCraftInputView.flushToApp).
+            if (inputView != null && !inputView.suppressingWatcher && inputView.batchDepth == 0) {
+                inputView.flushToApp();
+                inputView.trimIfLong();
             }
             return result;
         }
@@ -278,6 +253,9 @@ public final class __CLASS__ extends NativeActivity {
     private final class ArtCraftInputView extends View {
         private final ObservableEditable editable = new ObservableEditable();
         private boolean suppressingWatcher = false;
+        // The editable's text as the app already has it, and how deep the IME's batch edit is.
+        private String shadow = "";
+        private int batchDepth = 0;
 
         public ArtCraftInputView(Context context) {
             super(context);
@@ -285,6 +263,54 @@ public final class __CLASS__ extends NativeActivity {
             setFocusableInTouchMode(false);
             setVisibility(View.GONE);
             setWillNotDraw(true);
+        }
+
+        /**
+         * Send the app what changed in the editable since it last heard: one Backspace per code point
+         * removed, then the inserted text. Only the part between the text the old and new versions
+         * share at the start and at the end counts, so a keyboard that rewrites the word it is
+         * composing (Gboard replaces the composing span, or deletes the word and commits it again
+         * inside one batch edit) reaches the app as the letter that was typed. Sending the whole
+         * word again made the app's Undo take out the word together with the letter.
+         */
+        void flushToApp() {
+            String before = shadow;
+            String after = editable.toString();
+            shadow = after;
+            if (before.equals(after)) return;
+            int max = Math.min(before.length(), after.length());
+            int prefix = 0;
+            while (prefix < max && before.charAt(prefix) == after.charAt(prefix)) prefix++;
+            if (prefix > 0 && Character.isHighSurrogate(before.charAt(prefix - 1))) prefix--;
+            int suffix = 0;
+            int suffixMax = Math.min(before.length(), after.length()) - prefix;
+            while (suffix < suffixMax
+                    && before.charAt(before.length() - 1 - suffix) == after.charAt(after.length() - 1 - suffix)) {
+                suffix++;
+            }
+            if (suffix > 0 && Character.isLowSurrogate(before.charAt(before.length() - suffix))) suffix--;
+            String removed = before.substring(prefix, before.length() - suffix);
+            String inserted = after.substring(prefix, after.length() - suffix);
+            int deletes = removed.codePointCount(0, removed.length());
+            for (int i = 0; i < deletes; i++) {
+                onImeDelete();
+            }
+            if (!inserted.isEmpty()) {
+                onImeCommit(inserted);
+            }
+        }
+
+        /** Keep the mirror short; the app never needs more than the text near the cursor. */
+        void trimIfLong() {
+            if (editable.length() <= 2000) return;
+            suppressingWatcher = true;
+            try {
+                editable.delete(0, editable.length() - 500);
+                Selection.setSelection(editable, editable.length());
+            } finally {
+                suppressingWatcher = false;
+            }
+            shadow = editable.toString();
         }
 
         public void clearEditable() {
@@ -295,9 +321,13 @@ public final class __CLASS__ extends NativeActivity {
             } finally {
                 suppressingWatcher = false;
             }
+            shadow = "";
+            batchDepth = 0;
         }
 
         public void deleteLastFromEditable() {
+            // Whatever a batch changed so far goes out first, so the Backspace lands after it.
+            flushToApp();
             if (editable.length() == 0) return;
             suppressingWatcher = true;
             try {
@@ -307,6 +337,7 @@ public final class __CLASS__ extends NativeActivity {
             } finally {
                 suppressingWatcher = false;
             }
+            shadow = editable.toString();
         }
 
         @Override
@@ -323,10 +354,27 @@ public final class __CLASS__ extends NativeActivity {
         public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
             outAttrs.inputType = InputType.TYPE_CLASS_TEXT;
             outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN;
+            batchDepth = 0;
+            shadow = editable.toString();
             return new BaseInputConnection(this, true) {
                 @Override
                 public Editable getEditable() {
                     return editable;
+                }
+
+                @Override
+                public boolean beginBatchEdit() {
+                    batchDepth++;
+                    return true;
+                }
+
+                @Override
+                public boolean endBatchEdit() {
+                    if (batchDepth > 0 && --batchDepth == 0) {
+                        flushToApp();
+                        trimIfLong();
+                    }
+                    return batchDepth > 0;
                 }
 
                 @Override
