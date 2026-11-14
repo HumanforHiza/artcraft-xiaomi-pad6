@@ -12,6 +12,8 @@
 - Registered build targets and SAF launcher recipes in `lib/build-common.sh`.
 
 ### Fixed
+- **WordCraft saved every edit over the opened file on its own** — The launcher's persist hook, which runs every couple of seconds, called `file.save` whenever the document was dirty and had a path. Every change was therefore written to the user's file within about two seconds whether AutoSave was on or off, "Don't Save" could not discard anything, and because a launcher save counts as an explicit save the AutoSave switch turned itself on. Combined with the old non-truncating SAF write-back, an edit that made a picked document smaller corrupted it without the user pressing Save. The hook now persists settings only; unsaved work is kept by local recovery (File › Recover) when Android kills the app, and the document is written when the user saves or AutoSave (after a first save) does.
+- **GENERATOR_VERSION bumped to 74.**
 - **Saving over an existing document corrupted it when the new file was smaller** — `safCommit` opened the picked document with plain `"w"`, which many providers (the system's Downloads/external storage among them) do not truncate: the old file's tail stayed behind and a `.docx`/`.xlsx`/`.pptx` no longer opened. It only showed once Save started writing back to opened documents. The commit now writes through the file descriptor and truncates the file to the bytes written (cloud providers whose descriptor is a pipe replace the content anyway).
 - **A "Save, then quit" could end the app before the write-back** — the shell now runs the SAF poll (and its `SaveMirror` sync) right before it finishes the Activity, both for `quit_requested` and for a settled window close.
 - **GENERATOR_VERSION bumped to 73.**

@@ -733,7 +733,7 @@ marker = android_dir / ".artcraft-android-builder-generated"
 # Bump this whenever the generated launcher template changes so stale wrappers (which live in the
 # source checkout and would otherwise be preserved forever) are regenerated automatically instead
 # of failing against a newer app API.
-GENERATOR_VERSION = "73"
+GENERATOR_VERSION = "74"
 
 # A complete adapter supplied by the user wins over auto-detection. This folder is maintained
 # inside the builder, while its contents are copied into this source checkout.
@@ -2383,12 +2383,12 @@ PERSIST_RECIPES = {
     if let Err(error) = inner.session.enable_recovery(dir.join("recovery"), std::sync::Arc::new(|| {})) {
         log::warn!("local recovery unavailable: {error}");
     }''',
+        # Settings only. The document is not saved here: this runs every couple of seconds, and a
+        # forced `file.save` wrote every edit straight over the user's file (AutoSave switched off
+        # or not). Unsaved work survives a killed app through local recovery (see "load").
         "save": '''match serde_json::to_vec_pretty(&inner.prefs()) {
         Ok(bytes) => persist_write(dir, "ui.json", &bytes),
         Err(error) => log::warn!("saving settings: {error}"),
-    }
-    if inner.session.dirty && inner.session.path.is_some() {
-        let _ = inner.run("file.save", serde_json::json!({}));
     }''',
     },
     "designcraft": {

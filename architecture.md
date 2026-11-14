@@ -365,6 +365,7 @@ Complex recipes define how each app integrates SAF:
 - `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` pointed to same location; `HOME`, `XDG_DATA_HOME` pointed to internal (for fonts)
 - Persist dir helpers, load after construction, save periodically/on exit
 - Per-app recipes define how to load/save (e.g. from `inner.ui`/`inner.session`)
+- Save hooks persist settings (and recovery copies) only, never the user's document: they run every couple of seconds, so a document save there would overwrite the user's file on every edit. Unsaved work is covered by each app's local recovery
 
 ### UI Scale
 - On first launch for phone-class devices (smallest width < 600dp): applies default scale once
