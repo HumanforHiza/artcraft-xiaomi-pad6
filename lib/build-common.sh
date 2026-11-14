@@ -733,7 +733,7 @@ marker = android_dir / ".artcraft-android-builder-generated"
 # Bump this whenever the generated launcher template changes so stale wrappers (which live in the
 # source checkout and would otherwise be preserved forever) are regenerated automatically instead
 # of failing against a newer app API.
-GENERATOR_VERSION = "72"
+GENERATOR_VERSION = "73"
 
 # A complete adapter supplied by the user wins over auto-detection. This folder is maintained
 # inside the builder, while its contents are copied into this source checkout.
@@ -3260,13 +3260,18 @@ icon = "@mipmap/ic_launcher"
             "            return;\n"
             "        }\n"
         )
+    # Before the app ends: push a save the app just wrote to the picked document (the SAF
+    # write-back runs from `poll_file_picker`), so "Save, then quit" cannot finish the Activity
+    # ahead of the write-back.
+    close_flush = "            self.poll_file_picker();\n" if saf else ""
     if has_quit_flag:
         quit_check = (
             "        if !self.closing && self.inner.quit_requested {\n"
             "            // The user confirmed the app's own prompt (\"Don't save\", or the save\n"
             "            // finished): the app may go now.\n"
             "            self.closing = true;\n"
-            "            finish_activity(&self.app);\n"
+            + close_flush
+            + "            finish_activity(&self.app);\n"
             "        }\n"
         )
     else:
@@ -3918,7 +3923,7 @@ impl AndroidShell {{
             log::info!("Android: the app kept the window open to ask about unsaved work");
         }} else {{
             self.closing = true;
-            finish_activity(&self.app);
+{close_flush}            finish_activity(&self.app);
         }}
     }}
 

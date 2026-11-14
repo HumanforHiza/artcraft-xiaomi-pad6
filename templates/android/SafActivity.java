@@ -1121,14 +1121,32 @@ public final class __CLASS__ extends NativeActivity {
             if (uriText == null) uriText = uriForSibling(path);
             if (uriText == null) return "NONE";
             Uri uri = Uri.parse(uriText);
-            // Use plain "w" mode to avoid text mode translation issues causing 0B files
-            OutputStream out = getContentResolver().openOutputStream(uri, "w");
-            if (out == null) return "ERROR: Android document provider did not open an output stream";
-            try (InputStream in = new FileInputStream(new File(path)); OutputStream target = out) {
+            // Plain "w" does not truncate on many providers (the system's Downloads/external
+            // storage among them): saving a document that got shorter left the old file's tail
+            // behind, and a zip-based file (.docx/.xlsx/.pptx) was then corrupt. Write through the
+            // descriptor and cut the file to exactly what was written. Providers whose descriptor
+            // is a pipe (cloud documents) cannot be truncated, but they replace the content anyway.
+            ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(uri, "w");
+            if (pfd == null) return "ERROR: Android document provider did not open the document for writing";
+            long written = 0;
+            try (ParcelFileDescriptor descriptor = pfd;
+                 InputStream in = new FileInputStream(new File(path));
+                 FileOutputStream target = new FileOutputStream(descriptor.getFileDescriptor())) {
                 byte[] buffer = new byte[64 * 1024];
                 int count;
-                while ((count = in.read(buffer)) != -1) target.write(buffer, 0, count);
+                while ((count = in.read(buffer)) != -1) {
+                    target.write(buffer, 0, count);
+                    written += count;
+                }
                 target.flush();
+                try {
+                    target.getChannel().truncate(written);
+                } catch (Exception notSeekable) {
+                    Log.i(TAG, "Document stream is not seekable; the provider replaces its content", notSeekable);
+                }
+                try {
+                    target.getFD().sync();
+                } catch (Exception ignored) { }
             }
             return "OK";
         } catch (Exception e) {
