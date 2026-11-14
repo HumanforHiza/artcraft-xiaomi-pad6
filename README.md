@@ -43,7 +43,33 @@ sudah ada.
   itu dipakai untuk membuka dan menyimpan file di luar pemilih dokumen sistem serta untuk membaca
   font tambahan di folder `Fonts` pada penyimpanan internal.
 
-Hasil uji di perangkat belum dicatat. Bagian ini akan diperbarui setelah APK dicoba di tablet.
+### Hasil uji 14 November 2026
+
+Diuji di Xiaomi Pad 6 (HyperOS 2, Android 14, layar 2880×1800 mendatar) dengan build pertama
+fork ini: WordCraft 0.18.1, GridCraft 0.19.1, DeckCraft 0.18.1. Bahan uji berupa file buatan
+sendiri yang berisi teks berformat, daftar, tabel, rumus, dua lembar kerja, dan tiga slide.
+
+| | WordCraft | GridCraft | DeckCraft |
+|---|---|---|---|
+| Terpasang dan terbuka | ya, tanpa crash | ya, tanpa crash | ya, tanpa crash |
+| Membuka file | `.docx` utuh: format, daftar, tabel, karakter khusus | `.xlsx` utuh: rumus terhitung, rumus antarlembar, freeze pane | `.pptx` utuh: poin bertingkat, tabel, kotak teks |
+| Menyimpan | menimpa file asli (dibuka lewat "Browse in WordCraft") | Ctrl+S membuka dialog simpan sebagai file baru | lihat catatan di bawah |
+| Isi setelah disimpan | utuh | utuh, termasuk rumus baru | utuh, termasuk catatan slide |
+
+Catatan:
+
+- **DeckCraft: "Save" tidak menimpa file asli** kalau file dibuka lewat pemilih dokumen Android.
+  Status bar menulis "Saved", tetapi yang tersimpan hanya salinan kerja di folder pribadi
+  aplikasi (`Android/data/com.artcraft.deckcraft/files/media/`). Salinan itu ikut terhapus saat
+  aplikasi di-uninstall. Untuk menyimpan ke lokasi yang dipilih, pakai **File → Save As**.
+- Antarmuka pas untuk layar tablet tanpa perlu mengubah skala.
+- Font Calibri dan Arial tidak ada di Android, jadi diganti font yang mirip. Aplikasi memberi
+  tahu hal ini. Untuk tampilan yang sama persis, salin font ke folder `Fonts` di penyimpanan
+  internal.
+- File yang dikirim lewat `adb push` baru muncul di pemilih dokumen setelah dipindai media
+  scanner Android.
+- Uji di atas memakai input keyboard yang dikirim lewat ADB. Keyboard dan mouse fisik belum
+  dicoba.
 
 ## Cara mengunduh dan memasang
 
