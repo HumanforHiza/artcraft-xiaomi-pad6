@@ -236,15 +236,30 @@ public final class __CLASS__ extends NativeActivity {
         }
     }
 
+    // `ime-probe:` lines: what the keyboard calls on the input connection and what reaches the app.
+    // Lengths and positions only, never the text; at most IME_PROBE_MAX lines a run.
+    private static final int IME_PROBE_MAX = 300;
+    private static final long IME_COALESCE_MS = 25;
+    private int imeProbeLines = 0;
+
+    private void imeProbe(String what) {
+        if (imeProbeLines >= IME_PROBE_MAX) return;
+        imeProbeLines++;
+        Log.i(TAG, "ime-probe: " + what);
+    }
+
+    private static int len(CharSequence text) {
+        return text == null ? -1 : text.length();
+    }
+
     private final class ObservableEditable extends SpannableStringBuilder {
         @Override
         public SpannableStringBuilder replace(int start, int end, CharSequence tb, int tbstart, int tbend) {
             SpannableStringBuilder result = super.replace(start, end, tb, tbstart, tbend);
-            // Outside a batch edit every change reaches the app at once; inside one, endBatchEdit
-            // sends the batch's net change (see ArtCraftInputView.flushToApp).
+            // The change reaches the app with whatever else the keyboard does next (see
+            // ArtCraftInputView.scheduleFlush); inside a batch edit, when the batch ends.
             if (inputView != null && !inputView.suppressingWatcher && inputView.batchDepth == 0) {
-                inputView.flushToApp();
-                inputView.trimIfLong();
+                inputView.scheduleFlush();
             }
             return result;
         }
@@ -256,6 +271,10 @@ public final class __CLASS__ extends NativeActivity {
         // The editable's text as the app already has it, and how deep the IME's batch edit is.
         private String shadow = "";
         private int batchDepth = 0;
+        private final Runnable flushRunnable = () -> {
+            flushToApp();
+            trimIfLong();
+        };
 
         public ArtCraftInputView(Context context) {
             super(context);
@@ -266,12 +285,29 @@ public final class __CLASS__ extends NativeActivity {
         }
 
         /**
+         * Send the editable's changes a moment later, together with any the keyboard makes right
+         * after. Keyboards rewrite the word being typed in several separate calls (delete the word
+         * before the cursor, then commit it again with the new letter, not always inside a batch
+         * edit); sent one by one, the app got "delete Kal, type KalX" and its Undo removed the word.
+         * Changes within IME_COALESCE_MS of each other reach the app as their net difference.
+         */
+        void scheduleFlush() {
+            removeCallbacks(flushRunnable);
+            postDelayed(flushRunnable, IME_COALESCE_MS);
+        }
+
+        /** Send pending changes now (before a key that must land after them). */
+        void flushNow() {
+            removeCallbacks(flushRunnable);
+            flushToApp();
+            trimIfLong();
+        }
+
+        /**
          * Send the app what changed in the editable since it last heard: one Backspace per code point
          * removed, then the inserted text. Only the part between the text the old and new versions
          * share at the start and at the end counts, so a keyboard that rewrites the word it is
-         * composing (Gboard replaces the composing span, or deletes the word and commits it again
-         * inside one batch edit) reaches the app as the letter that was typed. Sending the whole
-         * word again made the app's Undo take out the word together with the letter.
+         * composing reaches the app as the letter that was typed.
          */
         void flushToApp() {
             String before = shadow;
@@ -292,6 +328,8 @@ public final class __CLASS__ extends NativeActivity {
             String removed = before.substring(prefix, before.length() - suffix);
             String inserted = after.substring(prefix, after.length() - suffix);
             int deletes = removed.codePointCount(0, removed.length());
+            imeProbe("to app: backspaces=" + deletes + " insert=" + inserted.length()
+                    + " (mirror " + before.length() + " -> " + after.length() + ", prefix " + prefix + ", suffix " + suffix + ")");
             for (int i = 0; i < deletes; i++) {
                 onImeDelete();
             }
@@ -314,6 +352,7 @@ public final class __CLASS__ extends NativeActivity {
         }
 
         public void clearEditable() {
+            removeCallbacks(flushRunnable);
             suppressingWatcher = true;
             try {
                 editable.clear();
@@ -325,19 +364,26 @@ public final class __CLASS__ extends NativeActivity {
             batchDepth = 0;
         }
 
-        public void deleteLastFromEditable() {
-            // Whatever a batch changed so far goes out first, so the Backspace lands after it.
-            flushToApp();
-            if (editable.length() == 0) return;
-            suppressingWatcher = true;
-            try {
-                int len = editable.length();
-                editable.delete(len - 1, len);
-                Selection.setSelection(editable, editable.length());
-            } finally {
-                suppressingWatcher = false;
+        /**
+         * A Backspace key from the keyboard: remove the character before the mirror's end and let the
+         * change go out with the rest (a keyboard may follow it with a commit). With nothing in the
+         * mirror (text typed before the keyboard came up), the Backspace goes straight to the app.
+         */
+        public void backspaceFromKeyboard() {
+            int len = editable.length();
+            if (len == 0) {
+                flushNow();
+                onImeDelete();
+                return;
             }
-            shadow = editable.toString();
+            int cut = Character.isLowSurrogate(editable.charAt(len - 1)) && len >= 2 ? len - 2 : len - 1;
+            editable.delete(cut, len);
+            Selection.setSelection(editable, editable.length());
+        }
+
+        private String sel() {
+            return Selection.getSelectionStart(editable) + ".." + Selection.getSelectionEnd(editable)
+                    + "/" + editable.length();
         }
 
         @Override
@@ -354,8 +400,10 @@ public final class __CLASS__ extends NativeActivity {
         public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
             outAttrs.inputType = InputType.TYPE_CLASS_TEXT;
             outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN;
+            flushNow();
             batchDepth = 0;
             shadow = editable.toString();
+            imeProbe("new input connection, mirror " + sel());
             return new BaseInputConnection(this, true) {
                 @Override
                 public Editable getEditable() {
@@ -365,30 +413,71 @@ public final class __CLASS__ extends NativeActivity {
                 @Override
                 public boolean beginBatchEdit() {
                     batchDepth++;
+                    imeProbe("beginBatchEdit depth=" + batchDepth);
                     return true;
                 }
 
                 @Override
                 public boolean endBatchEdit() {
                     if (batchDepth > 0 && --batchDepth == 0) {
-                        flushToApp();
-                        trimIfLong();
+                        scheduleFlush();
                     }
+                    imeProbe("endBatchEdit depth=" + batchDepth);
                     return batchDepth > 0;
                 }
 
                 @Override
+                public boolean commitText(CharSequence text, int newCursorPosition) {
+                    imeProbe("commitText len=" + len(text) + " cursor=" + newCursorPosition + " mirror " + sel());
+                    return super.commitText(text, newCursorPosition);
+                }
+
+                @Override
+                public boolean setComposingText(CharSequence text, int newCursorPosition) {
+                    imeProbe("setComposingText len=" + len(text) + " cursor=" + newCursorPosition + " mirror " + sel());
+                    return super.setComposingText(text, newCursorPosition);
+                }
+
+                @Override
+                public boolean setComposingRegion(int start, int end) {
+                    imeProbe("setComposingRegion " + start + ".." + end + " mirror " + sel());
+                    return super.setComposingRegion(start, end);
+                }
+
+                @Override
+                public boolean finishComposingText() {
+                    imeProbe("finishComposingText mirror " + sel());
+                    return super.finishComposingText();
+                }
+
+                @Override
+                public boolean deleteSurroundingText(int beforeLength, int afterLength) {
+                    imeProbe("deleteSurroundingText " + beforeLength + "," + afterLength + " mirror " + sel());
+                    return super.deleteSurroundingText(beforeLength, afterLength);
+                }
+
+                @Override
+                public boolean setSelection(int start, int end) {
+                    imeProbe("setSelection " + start + ".." + end + " mirror " + sel());
+                    return super.setSelection(start, end);
+                }
+
+                @Override
                 public boolean sendKeyEvent(KeyEvent event) {
+                    if (event != null) {
+                        imeProbe("sendKeyEvent code=" + event.getKeyCode() + " action=" + event.getAction()
+                                + " soft=" + isFromSoftKeyboard(event) + " mirror " + sel());
+                    }
                     if (event != null && !isFromSoftKeyboard(event)) {
                         return super.sendKeyEvent(event);
                     }
                     if (event != null && isFromSoftKeyboard(event)) {
                         if (event.getAction() == KeyEvent.ACTION_DOWN) {
                             if (event.getKeyCode() == KeyEvent.KEYCODE_DEL) {
-                                deleteLastFromEditable();
-                                onImeDelete();
+                                backspaceFromKeyboard();
                                 return true;
                             } else if (event.getKeyCode() == KeyEvent.KEYCODE_ENTER) {
+                                flushNow();
                                 onImeEnter();
                                 return true;
                             }
@@ -403,6 +492,8 @@ public final class __CLASS__ extends NativeActivity {
 
                 @Override
                 public boolean performEditorAction(int actionCode) {
+                    imeProbe("performEditorAction " + actionCode);
+                    flushNow();
                     onImeEnter();
                     return true;
                 }

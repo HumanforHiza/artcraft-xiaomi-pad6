@@ -12,6 +12,12 @@
 - Registered build targets and SAF launcher recipes in `lib/build-common.sh`.
 
 ### Fixed
+- **Undo removed the start of the word (part 3)** — Undo after typing a letter mid-word on a Pad 6 still removed the word's start ("KalXimat" → "imat") with per-batch diffs: WordCraft's undo snapshots show the app received the word's deletion and its re-insertion as separate edits, so the keyboard's rewrite arrives in separate calls outside a batch edit. The input view now sends the editable's net change `IME_COALESCE_MS` (25 ms) after the last edit, so a delete and the commit that follows go out as one difference; a Backspace key from the keyboard goes through the same path, and Enter and editor actions send pending changes first.
+
+### Added
+- **`ime-probe:` log lines** — Each InputConnection call (commit, composing, delete, selection, batch edits, keys) and what reached the app, with lengths and positions only (never the text), at most 300 lines a run.
+- **GENERATOR_VERSION bumped to 79.**
+
 - **Apps rendered every frame while a caret blinked (the real cause of the high CPU use)** — The vendored winit turned every looper wake-up into a redraw (`cf12835`, to read typed text at once). eframe also wakes the looper for a *delayed* repaint request, sent through the event loop proxy, so a caret blink asking to be redrawn in half a second was redrawn immediately, and asked again, every frame: `render-probe` on a Pad 6 logged ~124 frames a second in WordCraft, all from the caret blink (`canvas.rs` `request_repaint_after(530 - since % 530 ms)`), and the same in any focused text field. Wake handling is back to upstream winit (a wake up redraws only with a pending redraw request or user events, which eframe schedules by their time), and `ArtCraftIme.wake()` now marks its wake-up (`android_activity::note_ime_wake`/`take_ime_wake`) so queued IME text still redraws at once.
 - **GENERATOR_VERSION bumped to 78.**
 
