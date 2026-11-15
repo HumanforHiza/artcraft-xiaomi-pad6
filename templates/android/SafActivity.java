@@ -258,8 +258,12 @@ public final class __CLASS__ extends NativeActivity {
             SpannableStringBuilder result = super.replace(start, end, tb, tbstart, tbend);
             // The change reaches the app with whatever else the keyboard does next (see
             // ArtCraftInputView.scheduleFlush); inside a batch edit, when the batch ends.
-            if (inputView != null && !inputView.suppressingWatcher && inputView.batchDepth == 0) {
-                inputView.scheduleFlush();
+            if (inputView != null && !inputView.suppressingWatcher) {
+                if (inputView.shortcutHeld) {
+                    inputView.keepFromApp();
+                } else if (inputView.batchDepth == 0) {
+                    inputView.scheduleFlush();
+                }
             }
             return result;
         }
@@ -271,6 +275,10 @@ public final class __CLASS__ extends NativeActivity {
         // The editable's text as the app already has it, and how deep the IME's batch edit is.
         private String shadow = "";
         private int batchDepth = 0;
+        // Ctrl, Alt or Meta is down (a shortcut). Keyboards act on shortcuts in their own mirror
+        // (Gboard's Ctrl+Z undoes its last commit there); those edits must not reach the app, which
+        // gets the shortcut itself and runs its own Undo.
+        private boolean shortcutHeld = false;
         private final Runnable flushRunnable = () -> {
             flushToApp();
             trimIfLong();
@@ -294,6 +302,30 @@ public final class __CLASS__ extends NativeActivity {
         void scheduleFlush() {
             removeCallbacks(flushRunnable);
             postDelayed(flushRunnable, IME_COALESCE_MS);
+        }
+
+        /** The mirror changed during a shortcut: take it as the app's text without sending it. */
+        void keepFromApp() {
+            removeCallbacks(flushRunnable);
+            shadow = editable.toString();
+            imeProbe("edit during a shortcut kept from the app, mirror " + sel());
+        }
+
+        /** Track Ctrl/Alt/Meta from the keys the keyboard passes on (see shortcutHeld). */
+        void trackShortcut(KeyEvent event) {
+            int code = event.getKeyCode();
+            boolean modifier = code == KeyEvent.KEYCODE_CTRL_LEFT || code == KeyEvent.KEYCODE_CTRL_RIGHT
+                    || code == KeyEvent.KEYCODE_ALT_LEFT || code == KeyEvent.KEYCODE_ALT_RIGHT
+                    || code == KeyEvent.KEYCODE_META_LEFT || code == KeyEvent.KEYCODE_META_RIGHT;
+            if (modifier && event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (!shortcutHeld) flushNow();
+                shortcutHeld = true;
+            } else if (modifier && event.getAction() == KeyEvent.ACTION_UP) {
+                shortcutHeld = event.isCtrlPressed() || event.isAltPressed() || event.isMetaPressed();
+            } else if (!event.isCtrlPressed() && !event.isAltPressed() && !event.isMetaPressed()) {
+                // A plain key: no shortcut is held (covers a modifier release the keyboard kept).
+                shortcutHeld = false;
+            }
         }
 
         /** Send pending changes now (before a key that must land after them). */
@@ -362,6 +394,7 @@ public final class __CLASS__ extends NativeActivity {
             }
             shadow = "";
             batchDepth = 0;
+            shortcutHeld = false;
         }
 
         /**
@@ -402,6 +435,7 @@ public final class __CLASS__ extends NativeActivity {
             outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI | EditorInfo.IME_FLAG_NO_FULLSCREEN;
             flushNow();
             batchDepth = 0;
+            shortcutHeld = false;
             shadow = editable.toString();
             imeProbe("new input connection, mirror " + sel());
             return new BaseInputConnection(this, true) {
@@ -466,7 +500,9 @@ public final class __CLASS__ extends NativeActivity {
                 public boolean sendKeyEvent(KeyEvent event) {
                     if (event != null) {
                         imeProbe("sendKeyEvent code=" + event.getKeyCode() + " action=" + event.getAction()
+                                + " meta=" + Integer.toHexString(event.getMetaState())
                                 + " soft=" + isFromSoftKeyboard(event) + " mirror " + sel());
+                        trackShortcut(event);
                     }
                     if (event != null && !isFromSoftKeyboard(event)) {
                         return super.sendKeyEvent(event);

@@ -12,6 +12,9 @@
 - Registered build targets and SAF launcher recipes in `lib/build-common.sh`.
 
 ### Fixed
+- **Undo also deleted text (the keyboard's own Ctrl+Z reached the app as a Backspace)** — `ime-probe` on a Pad 6 showed that typing reaches the app correctly (one `commitText` per key) but Gboard acts on Ctrl+Z itself: between Ctrl down and up it undoes its last commit in the input view's mirror, and that edit went to the app as a Backspace on top of the app's own Undo (at the mirror's end, which is not where the app's caret is after arrow keys). The input view now tracks Ctrl/Alt/Meta from the keys the keyboard passes on and keeps mirror edits made during a shortcut from the app; the shortcut itself still reaches the app.
+- **GENERATOR_VERSION bumped to 80.**
+
 - **Undo removed the start of the word (part 3)** — Undo after typing a letter mid-word on a Pad 6 still removed the word's start ("KalXimat" → "imat") with per-batch diffs: WordCraft's undo snapshots show the app received the word's deletion and its re-insertion as separate edits, so the keyboard's rewrite arrives in separate calls outside a batch edit. The input view now sends the editable's net change `IME_COALESCE_MS` (25 ms) after the last edit, so a delete and the commit that follows go out as one difference; a Backspace key from the keyboard goes through the same path, and Enter and editor actions send pending changes first.
 
 ### Added
