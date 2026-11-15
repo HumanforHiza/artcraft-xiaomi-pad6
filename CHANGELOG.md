@@ -12,6 +12,9 @@
 - Registered build targets and SAF launcher recipes in `lib/build-common.sh`.
 
 ### Fixed
+- **Apps rendered every frame while a caret blinked (the real cause of the high CPU use)** — The vendored winit turned every looper wake-up into a redraw (`cf12835`, to read typed text at once). eframe also wakes the looper for a *delayed* repaint request, sent through the event loop proxy, so a caret blink asking to be redrawn in half a second was redrawn immediately, and asked again, every frame: `render-probe` on a Pad 6 logged ~124 frames a second in WordCraft, all from the caret blink (`canvas.rs` `request_repaint_after(530 - since % 530 ms)`), and the same in any focused text field. Wake handling is back to upstream winit (a wake up redraws only with a pending redraw request or user events, which eframe schedules by their time), and `ArtCraftIme.wake()` now marks its wake-up (`android_activity::note_ime_wake`/`take_ime_wake`) so queued IME text still redraws at once.
+- **GENERATOR_VERSION bumped to 78.**
+
 - **Undo removed the start of the word (IME edits as delete-and-retype, part 2)** — Diffing each `replace` call was not enough: Gboard also edits by deleting the word before the cursor and committing it again with the new letter, in separate calls inside one batch edit, so the app still got "delete Kal, type KalX" and Undo took out "KalX" (seen on a Pad 6 with a letter or Escape typed mid-word). The input view now keeps the text the app already has (`shadow`) and sends the net change once per batch edit (`beginBatchEdit`/`endBatchEdit`), or per change outside one: the text both versions share at the start and the end is skipped, deletes are counted in code points.
 
 ### Added

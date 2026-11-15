@@ -400,6 +400,24 @@ mod sdk;
 mod waker;
 pub use waker::AndroidAppWaker;
 
+/// Set when the Activity wakes the looper because it queued IME text (`ArtCraftIme.wake()`), and
+/// taken by winit's Android event loop, which turns exactly that wake-up into a redraw so the
+/// queued text is read at once. Other wake-ups must not redraw early: eframe sends a delayed repaint
+/// request (a caret blink in half a second) through the event loop proxy, which wakes the looper too.
+static IME_WAKE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Record that the next wake-up comes from queued IME text.
+#[doc(hidden)]
+pub fn note_ime_wake() {
+    IME_WAKE.store(true, std::sync::atomic::Ordering::Release);
+}
+
+/// Whether a wake-up since the last call came from queued IME text (and clear it).
+#[doc(hidden)]
+pub fn take_ime_wake() -> bool {
+    IME_WAKE.swap(false, std::sync::atomic::Ordering::AcqRel)
+}
+
 mod main_callbacks;
 
 pub(crate) const ANDROID_ACTIVITY_TAG: &CStr = c"android-activity";

@@ -1464,9 +1464,25 @@ impl<T: 'static> EventLoop<T> {
 
             match poll_event {
                 android_activity::PollEvent::Wake => {
-                    self.pending_redraw = true;
-                    let _ = self.redraw_flag.get_and_reset();
-                    if !self.running {
+                    // In the X11 backend it's noted that too many false-positive wake ups
+                    // would cause the event loop to run continuously. They handle this by
+                    // re-checking for pending events (assuming they cover all
+                    // valid reasons for a wake up).
+                    //
+                    // User events, redraw requests and queued IME text are the reasons to
+                    // expect a wake up here, so a wake up without any of them is ignored. A
+                    // wake up must not redraw by itself: eframe asks for a delayed repaint (a
+                    // caret blink) through the event loop proxy, and redrawing on that wake
+                    // rendered every frame for as long as a caret blinked. Queued IME text
+                    // (`ArtCraftIme.wake()`) does redraw, so it is read without delay.
+                    // We also ignore wake ups while suspended.
+                    self.pending_redraw |= self.redraw_flag.get_and_reset();
+                    if android_activity::take_ime_wake() {
+                        self.pending_redraw = true;
+                    }
+                    if !self.running
+                        || (!self.pending_redraw && !self.user_events_receiver.has_incoming())
+                    {
                         return;
                     }
                 }

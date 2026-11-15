@@ -41,6 +41,7 @@ pub extern "system" fn Java_com_artcraft_ime_ArtCraftIme_wake(
     _env: *mut libc::c_void,
     _class: *mut libc::c_void,
 ) {
+    crate::note_ime_wake();
     if let Some(waker) = WAKER.get() {
         waker.wake();
     }
