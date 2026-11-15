@@ -12,6 +12,9 @@
 - Registered build targets and SAF launcher recipes in `lib/build-common.sh`.
 
 ### Fixed
+- **Ctrl+Z (and other Ctrl shortcuts) did nothing in the app while the keyboard was up** — `ime-probe` showed that Gboard consumes the key-down of Ctrl+Z (it runs its own undo on its mirror) and passes on only the key-up, after Ctrl is released, so the app never saw the shortcut. A key-up whose key-down never reached the app, while or just after (400 ms) Ctrl/Alt/Meta was held, is now replayed to the app as the whole shortcut (modifier down, key down, key up, modifier up). Not after text was typed since the modifier went down: a typed letter's key-up looks the same, and replaying it as Ctrl+<letter> would run a shortcut the user never pressed. `ime-probe` lines also carry the scan code, device and flags.
+- **GENERATOR_VERSION bumped to 81.**
+
 - **Undo also deleted text (the keyboard's own Ctrl+Z reached the app as a Backspace)** — `ime-probe` on a Pad 6 showed that typing reaches the app correctly (one `commitText` per key) but Gboard acts on Ctrl+Z itself: between Ctrl down and up it undoes its last commit in the input view's mirror, and that edit went to the app as a Backspace on top of the app's own Undo (at the mirror's end, which is not where the app's caret is after arrow keys). The input view now tracks Ctrl/Alt/Meta from the keys the keyboard passes on and keeps mirror edits made during a shortcut from the app; the shortcut itself still reaches the app.
 - **GENERATOR_VERSION bumped to 80.**
 

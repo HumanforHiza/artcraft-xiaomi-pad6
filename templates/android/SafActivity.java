@@ -261,8 +261,12 @@ public final class __CLASS__ extends NativeActivity {
             if (inputView != null && !inputView.suppressingWatcher) {
                 if (inputView.shortcutHeld) {
                     inputView.keepFromApp();
-                } else if (inputView.batchDepth == 0) {
-                    inputView.scheduleFlush();
+                } else {
+                    // Ordinary text: a key-up after this is a typed key, never a swallowed shortcut.
+                    inputView.textSinceShortcut = true;
+                    if (inputView.batchDepth == 0) {
+                        inputView.scheduleFlush();
+                    }
                 }
             }
             return result;
@@ -279,6 +283,12 @@ public final class __CLASS__ extends NativeActivity {
         // (Gboard's Ctrl+Z undoes its last commit there); those edits must not reach the app, which
         // gets the shortcut itself and runs its own Undo.
         private boolean shortcutHeld = false;
+        // Keys whose key-down reached the app, and the modifier of the last shortcut with when it
+        // was last held (see replaySwallowedShortcut).
+        private final java.util.Set<Integer> downsPassed = new java.util.HashSet<>();
+        private int shortcutModifier = 0;
+        private long shortcutAt = 0;
+        private boolean textSinceShortcut = false;
         private final Runnable flushRunnable = () -> {
             flushToApp();
             trimIfLong();
@@ -320,12 +330,50 @@ public final class __CLASS__ extends NativeActivity {
             if (modifier && event.getAction() == KeyEvent.ACTION_DOWN) {
                 if (!shortcutHeld) flushNow();
                 shortcutHeld = true;
+                shortcutModifier = code;
+                shortcutAt = android.os.SystemClock.uptimeMillis();
+                textSinceShortcut = false;
             } else if (modifier && event.getAction() == KeyEvent.ACTION_UP) {
                 shortcutHeld = event.isCtrlPressed() || event.isAltPressed() || event.isMetaPressed();
+                shortcutAt = android.os.SystemClock.uptimeMillis();
             } else if (!event.isCtrlPressed() && !event.isAltPressed() && !event.isMetaPressed()) {
                 // A plain key: no shortcut is held (covers a modifier release the keyboard kept).
                 shortcutHeld = false;
             }
+        }
+
+        private int metaFor(int modifierCode) {
+            switch (modifierCode) {
+                case KeyEvent.KEYCODE_CTRL_LEFT: return KeyEvent.META_CTRL_ON | KeyEvent.META_CTRL_LEFT_ON;
+                case KeyEvent.KEYCODE_CTRL_RIGHT: return KeyEvent.META_CTRL_ON | KeyEvent.META_CTRL_RIGHT_ON;
+                case KeyEvent.KEYCODE_ALT_LEFT: return KeyEvent.META_ALT_ON | KeyEvent.META_ALT_LEFT_ON;
+                case KeyEvent.KEYCODE_ALT_RIGHT: return KeyEvent.META_ALT_ON | KeyEvent.META_ALT_RIGHT_ON;
+                case KeyEvent.KEYCODE_META_LEFT: return KeyEvent.META_META_ON | KeyEvent.META_META_LEFT_ON;
+                case KeyEvent.KEYCODE_META_RIGHT: return KeyEvent.META_META_ON | KeyEvent.META_META_RIGHT_ON;
+                default: return 0;
+            }
+        }
+
+        /**
+         * Gboard runs Ctrl+Z/C/V/X/A on its own mirror: it consumes the key-down and passes on only the
+         * key-up, after Ctrl is released, so the app saw no shortcut (Undo did nothing). A key-up whose
+         * key-down never reached the app, during or just after a held modifier, is replayed as the whole
+         * shortcut: modifier down, key down, key up, modifier up. Returns whether it replayed.
+         */
+        boolean replaySwallowedShortcut(KeyEvent event, InputConnection connection) {
+            if (event.getAction() != KeyEvent.ACTION_UP || shortcutModifier == 0) return false;
+            int code = event.getKeyCode();
+            if (downsPassed.contains(code) || textSinceShortcut) return false;
+            long now = android.os.SystemClock.uptimeMillis();
+            if (!shortcutHeld && now - shortcutAt > 400) return false;
+            int meta = metaFor(shortcutModifier);
+            imeProbe("replay shortcut modifier=" + shortcutModifier + " key=" + code);
+            connection.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, shortcutModifier, 0, meta));
+            connection.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, meta));
+            connection.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0, meta));
+            connection.sendKeyEvent(new KeyEvent(now, now, KeyEvent.ACTION_UP, shortcutModifier, 0, 0));
+            shortcutModifier = 0;
+            return true;
         }
 
         /** Send pending changes now (before a key that must land after them). */
@@ -395,6 +443,8 @@ public final class __CLASS__ extends NativeActivity {
             shadow = "";
             batchDepth = 0;
             shortcutHeld = false;
+            shortcutModifier = 0;
+            downsPassed.clear();
         }
 
         /**
@@ -436,6 +486,8 @@ public final class __CLASS__ extends NativeActivity {
             flushNow();
             batchDepth = 0;
             shortcutHeld = false;
+            shortcutModifier = 0;
+            downsPassed.clear();
             shadow = editable.toString();
             imeProbe("new input connection, mirror " + sel());
             return new BaseInputConnection(this, true) {
@@ -501,8 +553,18 @@ public final class __CLASS__ extends NativeActivity {
                     if (event != null) {
                         imeProbe("sendKeyEvent code=" + event.getKeyCode() + " action=" + event.getAction()
                                 + " meta=" + Integer.toHexString(event.getMetaState())
+                                + " scan=" + event.getScanCode() + " device=" + event.getDeviceId()
+                                + " flags=" + Integer.toHexString(event.getFlags())
                                 + " soft=" + isFromSoftKeyboard(event) + " mirror " + sel());
+                        if (replaySwallowedShortcut(event, this)) {
+                            return true;
+                        }
                         trackShortcut(event);
+                        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                            downsPassed.add(event.getKeyCode());
+                        } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                            downsPassed.remove(event.getKeyCode());
+                        }
                     }
                     if (event != null && !isFromSoftKeyboard(event)) {
                         return super.sendKeyEvent(event);
